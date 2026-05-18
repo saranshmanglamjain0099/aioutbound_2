@@ -403,6 +403,13 @@ tbody tr:last-child td{border-bottom:none}
 <script>
 const $=id=>document.getElementById(id);
 const api=(p,o)=>fetch(p,o).then(r=>r.json()).catch(()=>({}));
+// Safe fetch helpers — always return parseable JSON even if server returns HTML/text
+async function safeJson(resp){
+  const ct=resp.headers.get('content-type')||'';
+  if(ct.includes('application/json'))return resp.json();
+  const txt=await resp.text();
+  return {detail:`HTTP ${resp.status}: ${txt.slice(0,200)}`};
+}
 const apiPost=(p,b)=>fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const apiPut=(p,b)=>fetch(p,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const apiPatch=(p,b)=>fetch(p,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
@@ -467,7 +474,7 @@ $('call-form').addEventListener('submit',async e=>{
   const body={phone,lead_name:$('f-name').value||'there',business_name:$('f-biz').value||'our company',service_type:$('f-svc').value||'our service'};
   const pid=$('f-agent-profile').value;if(pid)body.agent_profile_id=pid;
   if($('f-custom-prompt-chk').checked&&$('f-custom-prompt').value)body.system_prompt=$('f-custom-prompt').value;
-  const r=await apiPost('/api/call',body).then(x=>x.json()).catch(x=>({detail:x.message}));
+  const r=await apiPost('/api/call',body).then(safeJson).catch(x=>({detail:x.message}));
   btn.disabled=false;btn.textContent='📞 Dispatch Call';
   if(r.status==='dispatched'){toast('Call dispatched! Room: '+r.room);$('call-result').textContent='✅ Dispatched to '+r.phone+' (room: '+r.room+')';}
   else{toast(r.detail||'Dispatch failed','err');$('call-result').textContent=''}
@@ -529,7 +536,7 @@ async function createCampaign(){
   const body={name:$('camp-name').value||'Campaign',contacts:_campContacts,schedule_type:$('camp-sched').value,schedule_time:$('camp-time').value,call_delay_seconds:parseInt($('camp-delay').value)||3};
   const pid=$('camp-agent-profile').value;if(pid)body.agent_profile_id=pid;
   if($('camp-custom-chk').checked&&$('camp-prompt').value)body.system_prompt=$('camp-prompt').value;
-  const r=await apiPost('/api/campaigns',body).then(x=>x.json()).catch(()=>({detail:'Failed'}));
+  const r=await apiPost('/api/campaigns',body).then(safeJson).catch(e=>({detail:e.message}));
   if(r.campaign_id){toast('Campaign created!');loadCampaigns();}else toast(r.detail||'Error','err');
 }
 window.runCampaign=async(id,name)=>{if(!confirm(`Run "${name}" now?`))return;const r=await fetch('/api/campaigns/'+id+'/run',{method:'POST'}).then(x=>x.json());toast(r.status==='dispatching'?'Campaign dispatching!':'Error','ok');loadCampaigns();}
@@ -564,7 +571,7 @@ window.saveAgentProfile=async()=>{
   const editId=$('ag-edit-id').value;
   const body={name:$('ag-name').value,voice:$('ag-voice').value,model:$('ag-model').value,system_prompt:$('ag-prompt').value,enabled_tools:'[]',is_default:$('ag-default').checked};
   if(!body.name)return toast('Profile name required','err');
-  const r=editId?await apiPut('/api/agent-profiles/'+editId,body).then(x=>x.json()):await apiPost('/api/agent-profiles',body).then(x=>x.json());
+  const r=editId?await apiPut('/api/agent-profiles/'+editId,body).then(safeJson):await apiPost('/api/agent-profiles',body).then(safeJson);
   if(r.status==='created'||r.status==='updated'){toast(editId?'Profile updated!':'Profile created!');resetAgentForm();loadAgentProfiles();}else toast(r.detail||'Error','err');
 }
 window.editAgentProfile=async(id)=>{
@@ -632,8 +639,10 @@ async function loadSettings(){
 async function saveGroup(keys,elIds){
   const settings={};
   keys.forEach((k,i)=>{const el=$(elIds[i]);if(!el)return;const v=el.type==='checkbox'?String(el.checked):el.value;if(v)settings[k]=v;});
-  const r=await apiPost('/api/settings',{settings}).then(x=>x.json());
-  toast(r.status==='saved'?`Saved ${r.count} settings ✅`:(r.detail||'Error'),'ok');
+  const r=await apiPost('/api/settings',{settings}).then(safeJson).catch(e=>({detail:e.message}));
+  if(r.status==='saved')toast(`Saved ${r.count} settings ✅`,'ok');
+  else if(r.status==='partial'){toast(`Applied (session only) ⚠️ — add SUPABASE_SERVICE_KEY to Coolify to persist`,'warn');}
+  else toast(r.detail||'Save failed','err');
   loadLiveConfig();
 }
 window.createSIPTrunk=async()=>{

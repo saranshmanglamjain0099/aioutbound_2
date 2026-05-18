@@ -14,6 +14,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.exception_handlers import http_exception_handler
 from pydantic import BaseModel
 
 _orig_ssl = ssl.create_default_context
@@ -48,6 +49,26 @@ except ImportError:
     logger.warning("APScheduler not installed — campaign scheduling disabled")
 
 app = FastAPI(title="OutboundAI Dashboard", version="1.0.0")
+
+
+# ── Global error handler — ALWAYS returns JSON, never plain-text HTML ─────────
+# This fixes "Unexpected token 'I'" in the frontend when a 500 occurs.
+
+@app.exception_handler(Exception)
+async def _global_exc_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception: %s", exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "type": type(exc).__name__},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exc_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
 
 
 @app.on_event("startup")
@@ -166,16 +187,22 @@ async def api_dispatch_call(req: CallRequest):
     effective_tools = None
 
     if req.agent_profile_id:
-        profile = await get_agent_profile(req.agent_profile_id)
-        if profile:
-            if not effective_prompt and profile.get("system_prompt"):
-                effective_prompt = profile["system_prompt"]
-            effective_voice = profile.get("voice")
-            effective_model = profile.get("model")
-            effective_tools = profile.get("enabled_tools")
+        try:
+            profile = await get_agent_profile(req.agent_profile_id)
+            if profile:
+                if not effective_prompt and profile.get("system_prompt"):
+                    effective_prompt = profile["system_prompt"]
+                effective_voice = profile.get("voice")
+                effective_model = profile.get("model")
+                effective_tools = profile.get("enabled_tools")
+        except Exception as exc:
+            logger.warning("Could not load agent profile (using defaults): %s", exc)
 
     if not effective_prompt:
-        effective_prompt = await get_setting("system_prompt", "") or None
+        try:
+            effective_prompt = await get_setting("system_prompt", "") or None
+        except Exception:
+            effective_prompt = None  # fall back to agent default prompt
 
     room_name = f"call-{phone.replace('+', '')}-{random.randint(1000, 9999)}"
     metadata: dict = {
@@ -278,10 +305,33 @@ async def api_get_settings():
 @app.post("/api/settings")
 async def api_save_settings(req: SettingsRequest):
     filtered = {k: v for k, v in req.settings.items() if v is not None and v != ""}
-    await save_settings(filtered)
+    if not filtered:
+        return {"status": "saved", "count": 0, "note": "nothing to save"}
+
+    # Always apply to current process environment immediately
     for k, v in filtered.items():
         os.environ[k] = str(v)
-    return {"status": "saved", "count": len(filtered)}
+
+    # Try to persist to Supabase; if unavailable, warn but don't fail
+    supabase_ok = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY"))
+    if not supabase_ok:
+        return {
+            "status": "partial",
+            "count": len(filtered),
+            "warning": "Settings applied for this session only. "
+                        "Add SUPABASE_URL and SUPABASE_SERVICE_KEY to Coolify env vars to persist across restarts.",
+        }
+    try:
+        await save_settings(filtered)
+        return {"status": "saved", "count": len(filtered)}
+    except Exception as exc:
+        logger.warning("Supabase save failed (settings applied to env only): %s", exc)
+        return {
+            "status": "partial",
+            "count": len(filtered),
+            "warning": f"Applied for this session but Supabase persist failed: {exc}. "
+                        f"Ensure SUPABASE_SERVICE_KEY is set in Coolify.",
+        }
 
 
 # ── SIP trunk setup ───────────────────────────────────────────────────────────
