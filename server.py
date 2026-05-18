@@ -64,8 +64,14 @@ async def _shutdown():
 
 
 async def eff(key: str) -> str:
-    val = await get_setting(key, "")
-    return val if val else os.getenv(key, "")
+    """Read setting: Supabase DB first, then VPS env var. Never crashes."""
+    try:
+        val = await get_setting(key, "")
+        if val:
+            return val
+    except Exception:
+        pass
+    return os.getenv(key, "")
 
 
 # ── Request models ────────────────────────────────────────────────────────────
@@ -112,6 +118,21 @@ class CampaignRequest(BaseModel):
 
 class StatusRequest(BaseModel):
     status: str
+
+
+# ── Health check (required by Coolify / Docker) ──────────────────────────────
+
+@app.get("/health")
+async def health_check():
+    """Always returns 200. Used by Coolify reverse-proxy and Docker healthcheck."""
+    supabase_ok = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY"))
+    livekit_ok  = bool(os.getenv("LIVEKIT_URL") and os.getenv("LIVEKIT_API_KEY"))
+    return {
+        "status": "ok",
+        "supabase": "configured" if supabase_ok else "missing SUPABASE_URL / SUPABASE_SERVICE_KEY",
+        "livekit":  "configured" if livekit_ok  else "missing LIVEKIT_URL / LIVEKIT_API_KEY",
+        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview"),
+    }
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -472,13 +493,19 @@ async def _run_campaign(campaign_id: str) -> None:
 
 
 async def _reschedule_all_campaigns() -> None:
+    """Reschedule campaigns on startup. Skips silently if Supabase not ready."""
     if not _scheduler:
+        return
+    # Only attempt if Supabase is configured — avoids startup crash
+    if not (os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY")):
+        logger.warning("Supabase not configured — skipping campaign reschedule (set SUPABASE_URL and SUPABASE_SERVICE_KEY)")
         return
     try:
         campaigns = await get_all_campaigns()
         for c in campaigns:
             if c.get("status") == "active" and c.get("schedule_type") in ("daily", "weekdays"):
                 _schedule_campaign(c["id"], c["schedule_type"], c.get("schedule_time", "09:00"))
+        logger.info("Campaign reschedule complete")
     except Exception as exc:
         logger.warning("Could not reschedule campaigns: %s", exc)
 
