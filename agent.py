@@ -166,8 +166,13 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
     logger.info("SESSION MODE: pipeline (Deepgram STT + Gemini LLM + TTS)")
     stt = _deepgram_stt(model="nova-3", language="multi") if _deepgram_stt else None
     if is_sarvam and _sarvam_tts:
-        logger.info(f"Using Sarvam TTS: {gemini_voice}")
-        tts = _sarvam_tts(voice=gemini_voice)
+        # Determine language code (Sarvam requires target_language_code)
+        lang = "en-IN"
+        hi_speakers = {"meera", "amartya", "anushka", "manisha", "vidya", "arya", "abhilash", "karun", "hitesh"}
+        if gemini_voice.lower() in hi_speakers:
+            lang = "hi-IN"
+        logger.info(f"Using Sarvam TTS: {gemini_voice} ({lang})")
+        tts = _sarvam_tts(speaker=gemini_voice, target_language_code=lang)
     else:
         tts = _google_tts(voice=gemini_voice) if _google_tts else None
     return AgentSession(stt=stt, llm=_google_llm(model="gemini-2.0-flash"), tts=tts, vad=silero.VAD.load(), tools=tools)
