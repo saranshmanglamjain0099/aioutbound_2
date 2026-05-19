@@ -321,9 +321,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # ── Greeting ─────────────────────────────────────────────────────────────
     # gemini-3.1 and gemini-2.5 native-audio speak autonomously from system prompt.
-    # generate_reply() is blocked by the plugin for these models — skip it entirely.
+    # However, if we are in pipeline mode (e.g. using Sarvam TTS), we must manually trigger the first turn.
     _active_model = os.getenv("GEMINI_MODEL", "")
-    if "3.1" in _active_model or "2.5" in _active_model:
+    _use_realtime = os.getenv("USE_GEMINI_REALTIME", "true").lower() != "false"
+    _voice = os.getenv("GEMINI_TTS_VOICE", "")
+    _is_native = ("3.1" in _active_model or "2.5" in _active_model) and _use_realtime and not _voice.startswith("sarvam:")
+
+    if _is_native:
         await _log("info", "Gemini native-audio: model will greet autonomously from system prompt")
     else:
         greeting = (
