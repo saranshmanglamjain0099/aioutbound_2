@@ -68,6 +68,7 @@ _google_realtime = None
 _google_beta_realtime = None
 _google_llm = None
 _google_tts = None
+_google_stt = None
 
 try:
     from livekit.plugins import google as _gp
@@ -84,17 +85,11 @@ try:
     try:
         _google_llm = _gp.LLM
         _google_tts = _gp.TTS
+        _google_stt = _gp.STT
     except AttributeError:
         pass
 except ImportError:
     logger.warning("livekit-plugins-google not installed")
-
-_deepgram_stt = None
-try:
-    from livekit.plugins import deepgram as _dg
-    _deepgram_stt = _dg.STT
-except ImportError:
-    pass
 
 _sarvam_tts = None
 try:
@@ -172,8 +167,8 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
     if _google_llm is None:
         raise RuntimeError("No Google AI backend. Run: pip install 'livekit-plugins-google>=1.0'")
 
-    logger.info("SESSION MODE: pipeline (Deepgram STT + Gemini LLM + TTS)")
-    stt = _deepgram_stt(model="nova-3", language="multi") if _deepgram_stt else None
+    logger.info("SESSION MODE: pipeline (Google STT + Gemini LLM + TTS)")
+    stt = _google_stt() if _google_stt else None
     if is_sarvam and _sarvam_tts:
         # Determine language code (Sarvam requires target_language_code)
         lang = "hi-IN"
