@@ -69,6 +69,8 @@ _google_beta_realtime = None
 _google_llm = None
 _google_tts = None
 _google_stt = None
+_deepgram_stt = None
+_openai_llm = None
 
 try:
     from livekit.plugins import google as _gp
@@ -90,6 +92,18 @@ try:
         pass
 except ImportError:
     logger.warning("livekit-plugins-google not installed")
+
+try:
+    from livekit.plugins import deepgram as _dg
+    _deepgram_stt = _dg.STT
+except ImportError:
+    pass
+
+try:
+    from livekit.plugins import openai as _oa
+    _openai_llm = _oa.LLM
+except ImportError:
+    pass
 
 _sarvam_tts = None
 try:
@@ -164,11 +178,24 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
 
         return AgentSession(llm=RealtimeClass(**realtime_kwargs), tools=tools)
 
-    if _google_llm is None:
-        raise RuntimeError("No Google AI backend. Run: pip install 'livekit-plugins-google>=1.0'")
+    # Support for OpenRouter models via OpenAI plugin
+    if "gemini" not in gemini_model.lower() and _openai_llm is not None:
+        logger.info(f"Using OpenRouter/OpenAI for model: {gemini_model}")
+        llm = _openai_llm(model=gemini_model, base_url="https://openrouter.ai/api/v1", api_key=os.getenv("OPENROUTER_API_KEY", ""))
+    elif _google_llm is not None:
+        llm = _google_llm(model=gemini_model)
+    else:
+        raise RuntimeError("No Google or OpenAI backend. Run: pip install 'livekit-plugins-google>=1.0'")
 
-    logger.info("SESSION MODE: pipeline (Google STT + Gemini LLM + TTS)")
-    stt = _google_stt() if _google_stt else None
+    logger.info("SESSION MODE: pipeline (STT + LLM + TTS)")
+    if _deepgram_stt and os.getenv("DEEPGRAM_API_KEY", "") and os.getenv("DEEPGRAM_API_KEY") != "your_deepgram_key":
+        logger.info("Using Deepgram STT")
+        stt = _deepgram_stt(model="nova-3", language="hi") # 'hi' natively supports Hinglish code-switching best in Deepgram
+    elif _google_stt:
+        logger.info("Using Google STT")
+        stt = _google_stt()
+    else:
+        stt = None
     if is_sarvam and _sarvam_tts:
         # Determine language code (Sarvam requires target_language_code)
         lang = "hi-IN"
@@ -185,7 +212,7 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
         tts = _sarvam_tts(speaker=gemini_voice, target_language_code=lang, model=sarvam_model)
     else:
         tts = _google_tts(voice=gemini_voice) if _google_tts else None
-    return AgentSession(stt=stt, llm=_google_llm(model="gemini-2.0-flash"), tts=tts, vad=silero.VAD.load(), tools=tools)
+    return AgentSession(stt=stt, llm=llm, tts=tts, vad=silero.VAD.load(), tools=tools)
 
 
 class OutboundAssistant(Agent):
