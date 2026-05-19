@@ -217,9 +217,9 @@ tbody tr:last-child td{border-bottom:none}
       <input type="hidden" id="ag-edit-id"/>
       <div class="form-group"><label>Profile Name</label><input id="ag-name" placeholder="Priya — Dental Clinic"/></div>
       <div class="form-group"><label>Voice</label>
-        <select id="ag-voice">
+        <select id="ag-voice" onchange="document.getElementById('ag-custom-voice-wrap').style.display=this.value==='sarvam:custom'?'block':'none'">
           <optgroup label="Female voices"><option value="Aoede">Aoede — warm, expressive ⭐</option><option value="Achernar">Achernar — soft & clear</option><option value="Autonoe">Autonoe — natural female</option><option value="Callirrhoe">Callirrhoe — gentle female</option><option value="Despina">Despina — bright female</option><option value="Erinome">Erinome — smooth female</option><option value="Gacrux">Gacrux — rich female</option><option value="Kore">Kore — soft, calm</option><option value="Laomedeia">Laomedeia — light female</option><option value="Leda">Leda — clear female</option><option value="Pulcherrima">Pulcherrima — warm female</option><option value="Sulafat">Sulafat — smooth female</option><option value="Vindemiatrix">Vindemiatrix — professional female</option><option value="Zephyr">Zephyr — airy female</option></optgroup>
-          <optgroup label="Sarvam AI (v3 Voices)"><option value="sarvam:ritu">Ritu (Female)</option><option value="sarvam:kavya">Kavya (Female)</option><option value="sarvam:shreya">Shreya (Female)</option><option value="sarvam:amelia">Amelia (Female English)</option><option value="sarvam:shubh">Shubh (Male)</option><option value="sarvam:rahul">Rahul (Male)</option><option value="sarvam:kabir">Kabir (Male)</option></optgroup>
+          <optgroup label="Sarvam AI (Indian)"><option value="sarvam:meera">Meera (Hindi/Eng Female)</option><option value="sarvam:amartya">Amartya (Hindi/Eng Male)</option><option value="sarvam:aarti">Aarti (Eng Female)</option><option value="sarvam:shruthi">Shruthi (Tamil Female)</option><option value="sarvam:ritu">Ritu (v3 Female)</option><option value="sarvam:shubh">Shubh (v3 Male)</option><option value="sarvam:custom">Custom Sarvam Voice ID...</option></optgroup>
           <optgroup label="Male voices"><option value="Achird">Achird — clear male</option><option value="Algenib">Algenib — strong male</option><option value="Algieba">Algieba — rich male</option><option value="Alnilam">Alnilam — deep male</option><option value="Charon">Charon — calm, deep</option><option value="Enceladus">Enceladus — expressive male</option><option value="Fenrir">Fenrir — confident male</option><option value="Iapetus">Iapetus — steady male</option><option value="Orus">Orus — warm male</option><option value="Perseus">Perseus — clear male</option><option value="Puck">Puck — bright, energetic</option><option value="Rasalgethi">Rasalgethi — bold male</option><option value="Sadachbia">Sadachbia — natural male</option><option value="Sadaltager">Sadaltager — smooth male</option><option value="Schedar">Schedar — professional male</option><option value="Umbriel">Umbriel — deep, calm</option><option value="Zubenelgenubi">Zubenelgenubi — resonant male</option></optgroup>
         </select>
       </div>
@@ -303,11 +303,12 @@ tbody tr:last-child td{border-bottom:none}
         <select id="s-goog-model"><option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview ⭐</option><option value="gemini-2.5-flash-native-audio-preview-12-2025">gemini-2.5-flash-native-audio</option></select>
       </div>
       <div class="form-group"><label>Voice</label>
-        <select id="s-goog-voice">
+        <select id="s-goog-voice" onchange="document.getElementById('s-custom-voice-wrap').style.display=this.value==='sarvam:custom'?'block':'none'">
           <optgroup label="Female"><option value="Aoede">Aoede ⭐</option><option value="Achernar">Achernar</option><option value="Autonoe">Autonoe</option><option value="Callirrhoe">Callirrhoe</option><option value="Despina">Despina</option><option value="Erinome">Erinome</option><option value="Gacrux">Gacrux</option><option value="Kore">Kore</option><option value="Laomedeia">Laomedeia</option><option value="Leda">Leda</option><option value="Pulcherrima">Pulcherrima</option><option value="Sulafat">Sulafat</option><option value="Vindemiatrix">Vindemiatrix</option><option value="Zephyr">Zephyr</option></optgroup>
           <optgroup label="Male"><option value="Achird">Achird</option><option value="Algenib">Algenib</option><option value="Algieba">Algieba</option><option value="Alnilam">Alnilam</option><option value="Charon">Charon</option><option value="Enceladus">Enceladus</option><option value="Fenrir">Fenrir</option><option value="Iapetus">Iapetus</option><option value="Orus">Orus</option><option value="Perseus">Perseus</option><option value="Puck">Puck</option><option value="Rasalgethi">Rasalgethi</option><option value="Sadachbia">Sadachbia</option><option value="Sadaltager">Sadaltager</option><option value="Schedar">Schedar</option><option value="Umbriel">Umbriel</option><option value="Zubenelgenubi">Zubenelgenubi</option></optgroup>
         </select>
       </div>
+      <div class="form-group" id="s-custom-voice-wrap" style="display:none"><label>Custom Voice ID</label><input type="text" id="s-custom-voice-id" placeholder="Paste voice ID here"></div>
       <div class="form-group"><label style="display:flex;align-items:center;gap:8px;text-transform:none"><input type="checkbox" id="s-use-realtime" checked> Use Gemini Live Realtime (Disable for Sarvam TTS)</label></div>
       <div class="form-group"><label>Sarvam API Key (for Indian voices)</label><div class="input-wrap"><input id="s-sarvam-key" type="password" placeholder="xxxxxxxx-xxxx..."/><button class="eye-btn" onclick="togglePwd('s-sarvam-key',this)">👁</button></div></div>
       <button class="btn btn-primary" onclick="saveGroup(['GOOGLE_API_KEY','GEMINI_MODEL','GEMINI_TTS_VOICE','USE_GEMINI_REALTIME','SARVAM_API_KEY'],['s-goog-key','s-goog-model','s-goog-voice','s-use-realtime','s-sarvam-key'])">💾 Save Gemini</button>
@@ -640,7 +641,7 @@ async function loadSettings(){
 }
 async function saveGroup(keys,elIds){
   const settings={};
-  keys.forEach((k,i)=>{const el=$(elIds[i]);if(!el)return;const v=el.type==='checkbox'?String(el.checked):el.value;if(v)settings[k]=v;});
+  keys.forEach((k,i)=>{const el=$(elIds[i]);if(!el)return;let v=el.type==='checkbox'?String(el.checked):el.value;if(k==='GEMINI_TTS_VOICE'&&v==='sarvam:custom'){const cv=$('s-custom-voice-id').value;if(cv)v='sarvam:custom:'+cv;}if(v)settings[k]=v;});
   const r=await apiPost('/api/settings',{settings}).then(safeJson).catch(e=>({detail:e.message}));
   if(r.status==='saved')toast(`Saved ${r.count} settings ✅`,'ok');
   else if(r.status==='partial'){toast(`Applied (session only) ⚠️ — add SUPABASE_SERVICE_KEY to Coolify to persist`,'warn');}

@@ -99,6 +99,9 @@ except ImportError:
 _sarvam_tts = None
 try:
     from livekit.plugins import sarvam as _sa
+    import livekit.plugins.sarvam.tts as _sa_tts
+    # Monkey-patch Sarvam's strict validation so users can pass custom voice IDs
+    _sa_tts.validate_model_speaker_compatibility = lambda m, s: True
     _sarvam_tts = _sa.TTS
 except ImportError:
     pass
@@ -123,9 +126,15 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
 
     # Sarvam override
     is_sarvam = gemini_voice.startswith("sarvam:")
+    custom_sarvam_id = None
     if is_sarvam:
         use_realtime = False
-        gemini_voice = gemini_voice.replace("sarvam:", "")
+        parts = gemini_voice.split(":")
+        if len(parts) >= 3 and parts[1] == "custom":
+            custom_sarvam_id = ":".join(parts[2:])
+            gemini_voice = custom_sarvam_id
+        else:
+            gemini_voice = gemini_voice.replace("sarvam:", "")
 
     RealtimeClass = _google_realtime or (_google_beta_realtime if use_realtime else None)
 
@@ -170,8 +179,15 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
         lang = "hi-IN"
         if gemini_voice.lower() in ("amelia", "sophia"):
             lang = "en-IN"
-        logger.info(f"Using Sarvam TTS: {gemini_voice} ({lang})")
-        tts = _sarvam_tts(speaker=gemini_voice, target_language_code=lang, model="bulbul:v3")
+        
+        sarvam_model = "bulbul:v3"
+        # If it's a custom ID or an older voice, v3 might reject it serverside. We'll try v3.
+        # But if it's explicitly 'meera', 'amartya', etc., they only exist in v2.
+        if gemini_voice.lower() in ("meera", "amartya", "anushka", "manisha", "vidya", "arya", "abhilash", "karun", "hitesh"):
+            sarvam_model = "bulbul:v2"
+
+        logger.info(f"Using Sarvam TTS: {gemini_voice} ({lang}) [Model: {sarvam_model}]")
+        tts = _sarvam_tts(speaker=gemini_voice, target_language_code=lang, model=sarvam_model)
     else:
         tts = _google_tts(voice=gemini_voice) if _google_tts else None
     return AgentSession(stt=stt, llm=_google_llm(model="gemini-2.0-flash"), tts=tts, vad=silero.VAD.load(), tools=tools)
