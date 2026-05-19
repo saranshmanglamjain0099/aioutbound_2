@@ -96,6 +96,13 @@ try:
 except ImportError:
     pass
 
+_sarvam_tts = None
+try:
+    from livekit.plugins import sarvam as _sa
+    _sarvam_tts = _sa.TTS
+except ImportError:
+    pass
+
 
 # ── Session factory ──────────────────────────────────────────────────────────
 
@@ -113,6 +120,12 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
     gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
     gemini_voice = os.getenv("GEMINI_TTS_VOICE", "Aoede")
     use_realtime = os.getenv("USE_GEMINI_REALTIME", "true").lower() != "false"
+
+    # Sarvam override
+    is_sarvam = gemini_voice.startswith("sarvam:")
+    if is_sarvam:
+        use_realtime = False
+        gemini_voice = gemini_voice.replace("sarvam:", "")
 
     RealtimeClass = _google_realtime or (_google_beta_realtime if use_realtime else None)
 
@@ -150,9 +163,13 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
     if _google_llm is None:
         raise RuntimeError("No Google AI backend. Run: pip install 'livekit-plugins-google>=1.0'")
 
-    logger.info("SESSION MODE: pipeline (Deepgram STT + Gemini LLM + Google TTS)")
+    logger.info("SESSION MODE: pipeline (Deepgram STT + Gemini LLM + TTS)")
     stt = _deepgram_stt(model="nova-3", language="multi") if _deepgram_stt else None
-    tts = _google_tts() if _google_tts else None
+    if is_sarvam and _sarvam_tts:
+        logger.info(f"Using Sarvam TTS: {gemini_voice}")
+        tts = _sarvam_tts(voice=gemini_voice)
+    else:
+        tts = _google_tts(voice=gemini_voice) if _google_tts else None
     return AgentSession(stt=stt, llm=_google_llm(model="gemini-2.0-flash"), tts=tts, vad=silero.VAD.load(), tools=tools)
 
 
