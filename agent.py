@@ -134,7 +134,7 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
     use_realtime = os.getenv("USE_GEMINI_REALTIME", "true").lower() != "false"
 
     # Models that ONLY work with the Live API (audio-to-audio, no generateContent)
-    LIVE_ONLY_MODELS = {"gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-preview-12-2025"}
+    LIVE_ONLY_MODELS = {"gemini-3.1-flash-live-preview", "gemini-live-2.5-flash-native-audio"}
     # Fallback model for pipeline mode (supports generateContent)
     PIPELINE_FALLBACK_MODEL = "gemini-2.5-flash"
 
