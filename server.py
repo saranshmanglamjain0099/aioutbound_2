@@ -156,6 +156,60 @@ async def health_check():
     }
 
 
+@app.get("/api/diagnose")
+async def api_diagnose():
+    """Full diagnostic — checks every API key and service needed for a call to work."""
+    checks = {}
+    # Critical keys
+    critical = {
+        "LIVEKIT_URL": os.getenv("LIVEKIT_URL", ""),
+        "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY", ""),
+        "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET", ""),
+        "OUTBOUND_TRUNK_ID": os.getenv("OUTBOUND_TRUNK_ID", ""),
+        "VOBIZ_SIP_DOMAIN": os.getenv("VOBIZ_SIP_DOMAIN", ""),
+        "VOBIZ_USERNAME": os.getenv("VOBIZ_USERNAME", ""),
+        "VOBIZ_PASSWORD": os.getenv("VOBIZ_PASSWORD", ""),
+        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY", ""),
+        "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", ""),
+        "SARVAM_API_KEY": os.getenv("SARVAM_API_KEY", ""),
+        "SUPABASE_URL": os.getenv("SUPABASE_URL", ""),
+        "SUPABASE_SERVICE_KEY": os.getenv("SUPABASE_SERVICE_KEY", ""),
+    }
+    missing = []
+    for k, v in critical.items():
+        is_set = bool(v) and v not in ("your_deepgram_key", "dummy_key_123")
+        checks[k] = "✅" if is_set else "❌ MISSING"
+        if not is_set:
+            missing.append(k)
+
+    # Check trunk ID format
+    trunk_id = os.getenv("OUTBOUND_TRUNK_ID", "")
+    if trunk_id and not trunk_id.startswith("ST_"):
+        checks["OUTBOUND_TRUNK_ID"] = f"⚠️ '{trunk_id}' — should start with ST_ (LiveKit trunk ID, not Vobiz UUID)"
+
+    # Model info
+    model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
+    voice = os.getenv("GEMINI_TTS_VOICE", "Aoede")
+    use_rt = os.getenv("USE_GEMINI_REALTIME", "true")
+    is_pipeline = use_rt.lower() == "false" or voice.startswith("sarvam:")
+    checks["mode"] = "pipeline (STT→LLM→TTS)" if is_pipeline else f"Gemini Live realtime"
+    checks["model"] = model
+    checks["voice"] = voice
+
+    # Recent errors
+    try:
+        recent = await get_logs(limit=5)
+        checks["recent_errors"] = [{"msg": e.get("message",""), "level": e.get("level",""), "ts": e.get("timestamp","")} for e in recent]
+    except Exception:
+        checks["recent_errors"] = "could not fetch"
+
+    return {
+        "healthy": len(missing) == 0,
+        "missing_keys": missing,
+        "checks": checks,
+    }
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)

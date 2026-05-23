@@ -208,11 +208,42 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
         if gemini_voice.lower() in ("meera", "amartya", "anushka", "manisha", "vidya", "arya", "abhilash", "karun", "hitesh"):
             sarvam_model = "bulbul:v2"
 
+        sarvam_key = os.getenv("SARVAM_API_KEY", "")
+        if not sarvam_key:
+            logger.error("⚠️  SARVAM_API_KEY not set — Sarvam TTS will fail!")
         logger.info(f"Using Sarvam TTS: {gemini_voice} ({lang}) [Model: {sarvam_model}]")
-        tts = _sarvam_tts(speaker=gemini_voice, target_language_code=lang, model=sarvam_model)
+        tts = _sarvam_tts(speaker=gemini_voice, target_language_code=lang, model=sarvam_model, api_key=sarvam_key)
     else:
         tts = _google_tts(voice=gemini_voice) if _google_tts else None
-    return AgentSession(stt=stt, llm=llm, tts=tts, vad=silero.VAD.load(), tools=tools)
+    # ── FIX A: Tune VAD for SIP telephony noise ─────────────────────────────
+    # SIP lines have constant background hiss/static. Default threshold (0.5)
+    # causes VAD to think the human is always talking → AI stays silent → call drops.
+    # Raising activation_threshold to 0.65 ignores low-energy SIP noise.
+    # Raising min_silence_duration to 0.8s avoids premature end-of-speech on brief pauses.
+    # Using sample_rate=8000 matches SIP telephony codec (G.711 μ-law).
+    vad = silero.VAD.load(
+        activation_threshold=0.65,     # Higher = ignore SIP static (default 0.5)
+        min_silence_duration=0.80,     # Wait longer before end-of-speech (default 0.55)
+        min_speech_duration=0.10,      # Require 100ms of speech to trigger (default 0.05)
+        prefix_padding_duration=0.30,  # Capture start of speech cleanly
+        sample_rate=8000,              # Match SIP telephony sample rate
+    )
+    logger.info("VAD loaded with SIP-tuned params: threshold=0.65, silence=0.8s, rate=8kHz")
+
+    # ── FIX C: Validate Deepgram STT connectivity ───────────────────────────
+    # If Deepgram silently fails or the API key is invalid, the LLM never
+    # receives transcription → AI never responds → call drops.
+    if stt and _deepgram_stt and isinstance(stt, _deepgram_stt):
+        dg_key = os.getenv("DEEPGRAM_API_KEY", "")
+        if not dg_key or dg_key == "your_deepgram_key":
+            logger.error("⚠️  DEEPGRAM_API_KEY is missing or placeholder — STT will fail silently!")
+            asyncio.get_event_loop().create_task(
+                _log("error", "Deepgram API key missing/placeholder", "STT will not transcribe any audio")
+            )
+        else:
+            logger.info("Deepgram STT configured (key=%s...)", dg_key[:8])
+
+    return AgentSession(stt=stt, llm=llm, tts=tts, vad=vad, tools=tools)
 
 
 class OutboundAssistant(Agent):
@@ -288,20 +319,43 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             ctx.shutdown()
             return
         await _log("info", f"Dialing {phone_number} via SIP trunk {trunk_id}")
-        try:
-            await ctx.api.sip.create_sip_participant(
-                api.CreateSIPParticipantRequest(
-                    room_name=ctx.room.name,
-                    sip_trunk_id=trunk_id,
-                    sip_call_to=phone_number,
-                    participant_identity=f"sip_{phone_number}",
-                    wait_until_answered=True,
+
+        # ── FIX D: SIP retry loop with exponential backoff ───────────────────
+        # Vobiz may rate-limit concurrent outbound dials (486 Busy / 403 Forbidden).
+        # Retry up to 3 times with increasing delay instead of failing immediately.
+        MAX_SIP_RETRIES = 3
+        sip_connected = False
+        for attempt in range(1, MAX_SIP_RETRIES + 1):
+            try:
+                await _log("info", f"SIP dial attempt {attempt}/{MAX_SIP_RETRIES} for {phone_number}")
+                await ctx.api.sip.create_sip_participant(
+                    api.CreateSIPParticipantRequest(
+                        room_name=ctx.room.name,
+                        sip_trunk_id=trunk_id,
+                        sip_call_to=phone_number,
+                        participant_identity=f"sip_{phone_number}",
+                        wait_until_answered=True,
+                    )
                 )
-            )
-        except Exception as exc:
-            await _log("error", f"SIP dial FAILED for {phone_number}: {exc}")
+                sip_connected = True
+                break
+            except Exception as exc:
+                exc_str = str(exc).lower()
+                is_rate_limit = any(code in exc_str for code in ["486", "403", "busy", "forbidden", "rate", "limit", "throttl"])
+                if is_rate_limit and attempt < MAX_SIP_RETRIES:
+                    backoff = 2 ** attempt  # 2s, 4s
+                    await _log("warning", f"SIP dial attempt {attempt} rate-limited: {exc}. Retrying in {backoff}s...")
+                    await asyncio.sleep(backoff)
+                else:
+                    await _log("error", f"SIP dial FAILED for {phone_number} (attempt {attempt}): {exc}")
+                    ctx.shutdown()
+                    return
+
+        if not sip_connected:
+            await _log("error", f"SIP dial EXHAUSTED all {MAX_SIP_RETRIES} retries for {phone_number}")
             ctx.shutdown()
             return
+
         await _log("info", f"Call ANSWERED — {phone_number} picked up, starting AI session now")
 
     # ── Build and start Gemini Live ──────────────────────────────────────────
@@ -356,25 +410,54 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             except Exception as _exc:
                 await _log("warning", f"Recording start failed (non-fatal): {_exc}")
 
+    # ── Audio stabilization delay ───────────────────────────────────────────
+    # SIP audio tracks take a moment to stabilize after answer.
+    # Without this delay, the first generate_reply may produce audio before
+    # the SIP participant's track is ready → audio is silently discarded.
+    if phone_number:
+        await _log("info", "Waiting 1.5s for SIP audio track to stabilize...")
+        await asyncio.sleep(1.5)
+
     # ── Greeting ─────────────────────────────────────────────────────────────
-    # gemini-3.1 and gemini-2.5 native-audio speak autonomously from system prompt.
-    # However, if we are in pipeline mode (e.g. using Sarvam TTS), we must manually trigger the first turn.
+    # ALWAYS force a greeting — never rely on Gemini to speak autonomously.
+    # Gemini native-audio mode *can* greet from system prompt, but often
+    # doesn't on SIP calls (audio track not ready, session init delay, etc).
+    # Forcing generate_reply guarantees the human hears something immediately.
     _active_model = os.getenv("GEMINI_MODEL", "")
     _use_realtime = os.getenv("USE_GEMINI_REALTIME", "true").lower() != "false"
     _voice = os.getenv("GEMINI_TTS_VOICE", "")
-    _is_native = ("3.1" in _active_model or "2.5" in _active_model) and _use_realtime and not _voice.startswith("sarvam:")
+    _is_pipeline = not _use_realtime or _voice.startswith("sarvam:")
 
-    if _is_native:
-        await _log("info", "Gemini native-audio: model will greet autonomously from system prompt")
-    else:
-        greeting = (
-            f"The call just connected. Greet the lead and ask if you're speaking with {lead_name}."
-            if phone_number else "Greet the caller warmly."
-        )
+    greeting = (
+        f"The call just connected. Greet the lead warmly and ask if you're speaking with {lead_name}. Be natural and conversational."
+        if phone_number else "Greet the caller warmly."
+    )
+
+    try:
+        await session.generate_reply(instructions=greeting)
+        await _log("info", "Initial greeting generated successfully")
+    except Exception as _gr_exc:
+        await _log("warning", f"generate_reply failed: {_gr_exc}")
+        # Fallback: try a simpler greeting
         try:
-            await session.generate_reply(instructions=greeting)
-        except Exception as _gr_exc:
-            await _log("warning", f"generate_reply failed: {_gr_exc}")
+            await session.generate_reply(instructions="Say: Hello! How are you today?")
+        except Exception:
+            await _log("error", "Both greeting attempts failed — AI will be silent")
+
+    # ── Dead-air watchdog ────────────────────────────────────────────────────
+    # If the greeting failed silently (no audio actually sent), the human
+    # hears dead air. After 8 seconds, force a backup greeting.
+    if phone_number:
+        async def _dead_air_watchdog():
+            await asyncio.sleep(8)
+            try:
+                await session.generate_reply(
+                    instructions=f"The lead may not have heard you. Say again: Hi {lead_name}, this is a call from {os.getenv('GEMINI_TTS_VOICE', 'your assistant')}. Can you hear me?"
+                )
+                await _log("info", "Dead-air watchdog triggered backup greeting")
+            except Exception:
+                pass
+        asyncio.create_task(_dead_air_watchdog())
 
     # ── Keep session alive until SIP participant actually leaves ─────────────
     # Without this block, the entrypoint returns and the process spins down.
