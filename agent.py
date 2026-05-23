@@ -455,45 +455,33 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         await asyncio.sleep(1.5)
 
     # ── Greeting ─────────────────────────────────────────────────────────────
-    # ALWAYS force a greeting — never rely on Gemini to speak autonomously.
-    # Gemini native-audio mode *can* greet from system prompt, but often
-    # doesn't on SIP calls (audio track not ready, session init delay, etc).
-    # Forcing generate_reply guarantees the human hears something immediately.
-    _active_model = os.getenv("GEMINI_MODEL", "")
+    # In REALTIME mode: Gemini Live handles audio natively. The system prompt
+    # already instructs the AI how to greet. Calling generate_reply on top
+    # causes DOUBLE/TRIPLE greetings (system prompt + forced + watchdog),
+    # creating a loop where the AI keeps saying "Hello? Can you hear me?"
+    #
+    # In PIPELINE mode: The LLM generates text only, so we MUST trigger
+    # generate_reply to push the first text → TTS → audio.
     _use_realtime = os.getenv("USE_GEMINI_REALTIME", "true").lower() != "false"
     _voice = os.getenv("GEMINI_TTS_VOICE", "")
     _is_pipeline = not _use_realtime or _voice.startswith("sarvam:")
 
-    greeting = (
-        f"The call just connected. Greet the lead warmly and ask if you're speaking with {lead_name}. Be natural and conversational."
-        if phone_number else "Greet the caller warmly."
-    )
-
-    try:
-        await session.generate_reply(instructions=greeting)
-        await _log("info", "Initial greeting generated successfully")
-    except Exception as _gr_exc:
-        await _log("warning", f"generate_reply failed: {_gr_exc}")
-        # Fallback: try a simpler greeting
+    if _is_pipeline:
+        greeting = (
+            f"The call just connected. Greet the lead warmly and ask if you're speaking with {lead_name}. Be natural and conversational."
+            if phone_number else "Greet the caller warmly."
+        )
         try:
-            await session.generate_reply(instructions="Say: Hello! How are you today?")
-        except Exception:
-            await _log("error", "Both greeting attempts failed — AI will be silent")
-
-    # ── Dead-air watchdog ────────────────────────────────────────────────────
-    # If the greeting failed silently (no audio actually sent), the human
-    # hears dead air. After 8 seconds, force a backup greeting.
-    if phone_number:
-        async def _dead_air_watchdog():
-            await asyncio.sleep(8)
+            await session.generate_reply(instructions=greeting)
+            await _log("info", "Pipeline greeting generated successfully")
+        except Exception as _gr_exc:
+            await _log("warning", f"generate_reply failed: {_gr_exc}")
             try:
-                await session.generate_reply(
-                    instructions=f"The lead may not have heard you. Say again: Hi {lead_name}, this is a call from {os.getenv('GEMINI_TTS_VOICE', 'your assistant')}. Can you hear me?"
-                )
-                await _log("info", "Dead-air watchdog triggered backup greeting")
+                await session.generate_reply(instructions="Say: Hello! How are you today?")
             except Exception:
-                pass
-        asyncio.create_task(_dead_air_watchdog())
+                await _log("error", "Both greeting attempts failed — AI will be silent")
+    else:
+        await _log("info", "Realtime mode — greeting handled by system prompt, no forced generate_reply")
 
     # ── Keep session alive until SIP participant actually leaves ─────────────
     # Without this block, the entrypoint returns and the process spins down.
