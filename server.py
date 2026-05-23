@@ -109,7 +109,7 @@ class CallRequest(BaseModel):
 class AgentProfileRequest(BaseModel):
     name: str
     voice: str = "Aoede"
-    model: str = "gemini-3.1-flash-live-preview"
+    model: str = "gemini-2.0-flash"
     system_prompt: Optional[str] = None
     enabled_tools: str = "[]"
     is_default: bool = False
@@ -152,7 +152,7 @@ async def health_check():
         "status": "ok",
         "supabase": "configured" if supabase_ok else "missing SUPABASE_URL / SUPABASE_SERVICE_KEY",
         "livekit":  "configured" if livekit_ok  else "missing LIVEKIT_URL / LIVEKIT_API_KEY",
-        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview"),
+        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
     }
 
 
@@ -188,7 +188,7 @@ async def api_diagnose():
         checks["OUTBOUND_TRUNK_ID"] = f"⚠️ '{trunk_id}' — should start with ST_ (LiveKit trunk ID, not Vobiz UUID)"
 
     # Model info
-    model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
+    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     voice = os.getenv("GEMINI_TTS_VOICE", "Aoede")
     use_rt = os.getenv("USE_GEMINI_REALTIME", "true")
     is_pipeline = use_rt.lower() == "false" or voice.startswith("sarvam:")
