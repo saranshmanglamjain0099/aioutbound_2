@@ -214,7 +214,24 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
         logger.info(f"Using Sarvam TTS: {gemini_voice} ({lang}) [Model: {sarvam_model}]")
         tts = _sarvam_tts(speaker=gemini_voice, target_language_code=lang, model=sarvam_model, api_key=sarvam_key)
     else:
-        tts = _google_tts(voice=gemini_voice) if _google_tts else None
+        # Google Cloud TTS requires a service account (GOOGLE_APPLICATION_CREDENTIALS),
+        # NOT the AI Studio GOOGLE_API_KEY. If Sarvam key is available, use Sarvam as
+        # fallback TTS since it works with just an API key.
+        sarvam_key = os.getenv("SARVAM_API_KEY", "")
+        has_cloud_creds = bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""))
+        if has_cloud_creds and _google_tts:
+            logger.info("Using Google Cloud TTS (service account credentials found)")
+            tts = _google_tts(voice=gemini_voice)
+        elif sarvam_key and _sarvam_tts:
+            # Fallback: use Sarvam TTS with a good default Indian voice
+            logger.info("No Google Cloud TTS credentials — falling back to Sarvam TTS (ritu)")
+            tts = _sarvam_tts(speaker="ritu", target_language_code="hi-IN", model="bulbul:v3", api_key=sarvam_key)
+        elif _google_tts:
+            logger.warning("Using Google TTS without Cloud credentials — may fail silently!")
+            tts = _google_tts(voice=gemini_voice)
+        else:
+            logger.error("No TTS backend available — agent will not produce audio!")
+            tts = None
     # ── FIX A: Tune VAD for SIP telephony noise ─────────────────────────────
     # SIP lines have constant background hiss/static. Default threshold (0.5)
     # causes VAD to think the human is always talking → AI stays silent → call drops.
