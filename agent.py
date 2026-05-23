@@ -129,9 +129,14 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
 
     ⚠️ EndSensitivity MUST use full string form: END_SENSITIVITY_LOW (not .LOW — AttributeError!)
     """
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
     gemini_voice = os.getenv("GEMINI_TTS_VOICE", "Aoede")
     use_realtime = os.getenv("USE_GEMINI_REALTIME", "true").lower() != "false"
+
+    # Models that ONLY work with the Live API (audio-to-audio, no generateContent)
+    LIVE_ONLY_MODELS = {"gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-preview-12-2025"}
+    # Fallback model for pipeline mode (supports generateContent)
+    PIPELINE_FALLBACK_MODEL = "gemini-2.5-flash"
 
     # Sarvam override
     is_sarvam = gemini_voice.startswith("sarvam:")
@@ -177,6 +182,20 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
             realtime_kwargs["context_window_compression"] = _ctx_compression_cfg
 
         return AgentSession(llm=RealtimeClass(**realtime_kwargs), tools=tools)
+
+    # ── Pipeline fallback ────────────────────────────────────────────────────
+    # If we get here, RealtimeModel is not available. Live-only models (like
+    # gemini-3.1-flash-live-preview) do NOT support generateContent, so we
+    # MUST swap to a pipeline-compatible model.
+    if use_realtime and RealtimeClass is None:
+        logger.warning("⚠️  RealtimeModel not available in livekit-plugins-google! "
+                       "Falling back to pipeline mode. Update livekit-plugins-google "
+                       "to the latest version for Live API support.")
+
+    if gemini_model in LIVE_ONLY_MODELS:
+        logger.warning("Model '%s' only supports Live API, not generateContent. "
+                       "Swapping to '%s' for pipeline mode.", gemini_model, PIPELINE_FALLBACK_MODEL)
+        gemini_model = PIPELINE_FALLBACK_MODEL
 
     # Support for OpenRouter models via OpenAI plugin
     if "gemini" not in gemini_model.lower() and _openai_llm is not None:
@@ -376,7 +395,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         await _log("info", f"Call ANSWERED — {phone_number} picked up, starting AI session now")
 
     # ── Build and start Gemini Live ──────────────────────────────────────────
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
     await _log("info", f"Building AI session — model={gemini_model}")
     active_tools = tool_ctx.build_tool_list(enabled_tools)
     await _log("info", f"Tools loaded: {[t.__name__ for t in active_tools]}")
